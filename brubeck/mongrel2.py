@@ -1,4 +1,4 @@
-from eventlet.green import zmq
+from gevent_zeromq import zmq
 import json
 from uuid import uuid4
 import cgi
