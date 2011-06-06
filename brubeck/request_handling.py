@@ -10,10 +10,9 @@ before anything else to guarantee the eventlet code is run first.
 
 See github.com/j2labs/brubeck for more information.
 """
+import gevent.pool
+from gevent import spawn
 
-import eventlet
-from eventlet import spawn, spawn_n, serve
-from eventlet.green import zmq
 
 from . import version
 
@@ -82,7 +81,7 @@ def route_message(application, message):
     The application is responsible for handling misconfigured routes.
     """
     handler = application.route_message(message)
-    spawn_n(request_handler, application, message, handler)
+    spawn(request_handler, application, message, handler)
 
 def request_handler(application, message, handler):
     """Coroutine for handling the request itself. It simply returns the request
@@ -90,7 +89,7 @@ def request_handler(application, message, handler):
     """
     if callable(handler):
         response = handler()
-        spawn_n(result_handler, application, message, response)
+        spawn(result_handler, application, message, response)
     
 def result_handler(application, message, response):
     """The request has been processed and this is called to do any post
@@ -558,7 +557,7 @@ class Brubeck(object):
         # right way...
         self.pool = pool
         if self.pool is None:
-            self.pool = eventlet.GreenPool()
+            self.pool = gevent.pool.Pool()
 
         # Set a base_handler for handling errors (eg. 404 handler)
         self.base_handler = base_handler
@@ -686,7 +685,7 @@ class Brubeck(object):
                 if request.is_disconnect():
                     continue
                 else:
-                    self.pool.spawn_n(route_message, self, request)
+                    self.pool.spawn(route_message, self, request)
         except KeyboardInterrupt, ki:
             # Put a newline after ^C
             print '\nBrubeck going down...'
