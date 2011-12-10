@@ -579,11 +579,12 @@ class JsonSchemaMessageHandler(WebMessageHandler):
         
         return response
 
-MULTIPLE_ITEM_SEP = ','
+
 
 class AutoAPIBase(JSONMessageHandler):
     model = None
     queries = None 
+    multiple_item_sep = ','
 
     ###
     ### configuring input and output formats
@@ -680,7 +681,7 @@ class AutoAPIBase(JSONMessageHandler):
         """Handles read - either with a filter (item_ids) or a total list
         """
         try:
-            shields = self.read([v for v in item_ids.split(MULTIPLE_ITEM_SEP) if v])
+            shields = self.read([v for v in item_ids.split(self.multiple_item_sep) if v])
         except FourOhFourException:
             return self.render(status_code=404)
         return self._create_response(shields)
@@ -717,7 +718,7 @@ class AutoAPIBase(JSONMessageHandler):
             created, updated, failed = self.create(shields)
             return self._create_response(updated, failed, created)
         else:
-            if not self.url_matches_body(item_ids.split(MULTIPLE_ITEM_SEP), shields):
+            if not self.url_matches_body(item_ids.split(self.multiple_item_sep), shields):
                 #TODO: add error message so client knows why the request failed
                 return self.render(status_code=400)
 
@@ -751,7 +752,7 @@ class AutoAPIBase(JSONMessageHandler):
         shields, invalid = self._pre_alter_validation()
         if invalid:
             return self.render(status_code=400)
-        if not self.url_matches_body(item_ids.split(MULTIPLE_ITEM_SEP), shields):
+        if not self.url_matches_body(item_ids.split(self.multiple_item_sep), shields):
             #TODO: add error message so client knows why the request failed
             return self.render(status_code=400)
         successes, failures = self.update(shields)
@@ -761,7 +762,7 @@ class AutoAPIBase(JSONMessageHandler):
         """ Handles delete for 1 or many items. Since this doesn't take a postbody, and just
         Item ids, pass those on directly to destroy
         """
-        item_ids = item_ids.split(MULTIPLE_ITEM_SEP)
+        item_ids = item_ids.split(self.multiple_item_sep)
         try:
             successes, failures = self.destroy(item_ids)
         except FourOhFourException:
@@ -992,7 +993,7 @@ class Brubeck(object):
             manifest_pattern = "/manifest.json"
             self.add_route_rule(manifest_pattern, JsonSchemaMessageHandler)
         
-        pattern = "/" + model_name  + "/((?P<item_ids>[-\w\d%s]+)/|$)" % MULTIPLE_ITEM_SEP
+        pattern = "/" + model_name  + "/((?P<item_ids>[-\w\d%s]+)/|$)" % APIClass.multiple_item_sep
         self.add_route_rule(pattern, APIClass)
         JsonSchemaMessageHandler.add_model(model)
 
