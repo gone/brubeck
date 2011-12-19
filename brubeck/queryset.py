@@ -115,3 +115,66 @@ class DictQueryset(AbstractQueryset):
         except KeyError:
             raise FourOhFourException
         return item_ids, []
+
+    
+class MongoQueryset(AbstractQueryset):
+    """ A Queryset that deals with talking to mongodb"""
+
+    def __init__(self, db_conn=None, api_id='id'):
+        """ A mongoqueryset takes a collection as it's fundamental unit."""
+        self.collection = db_conn
+        self.api_id=api_id
+    
+    def read_all(self):
+        return self.collection.find()
+
+    def read_one(self, i):
+        match = self.collection.find_one({self.id_field:i})
+        if not match:
+            raise FourOhFourException
+        return match
+
+    def read_many(self, ids):
+        matches = list(self.collection.find({self.id_field:{"$in":ids}}))
+        if len(matches) != len(ids):
+            raise FourOhFourException
+        return matches
+                
+    def create_one(self, shield):
+        return self.collection.insert(shield.to_python())
+    
+    def create_many(self, shields):
+        created, updated = [], []
+        exisiting_records = list(self.collection.find( { self.id_field : { "$in": shield_ids} } ))
+        shield_ids ={}
+        for shield in shields:
+            shield_ids[getattr(shield, self.id_field)] = shield
+        for record in exisiting_records:
+            if record.get(self.id_field) in shield_ids:
+                updated.append(shield_ids[record.get(self.id_field)])
+            else:
+                created.append(shield_ids[record.get(self.id_field)])
+        
+        self.collection.insert(shield.to_python() for shield in shields)
+
+        return created, updated, []
+                
+    def update_one(self, shield):
+        return self.update_many([shield])
+
+    def update_many(self, shields):
+        for shield in shields:
+            self.db_conn[str(getattr(shield, self.api_id))] = shield.to_python()
+        return shields, []
+    
+    def destroy_one(self, item_id):
+        return self.destroy_many([item_id])
+
+    def destroy_many(self, item_ids):
+        try:
+            for i in item_ids:
+                del self.db_conn[i]
+        except KeyError:
+            raise FourOhFourException
+        return item_ids, []
+

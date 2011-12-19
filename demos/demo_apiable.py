@@ -38,7 +38,7 @@ class TodosHandler(BaseHandler):
         parameters essentially map to the variation in how `load_listitems` is
         called.
         """
-        return self.render_template('demo_apiable.html')
+        return self.render_template('todos.html')
 
 
 ###
