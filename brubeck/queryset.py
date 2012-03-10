@@ -124,12 +124,16 @@ class MongoQueryset(AbstractQueryset):
         """ A mongoqueryset takes a collection as it's fundamental unit."""
         self.collection = db_conn
         self.api_id=api_id
+        
+    def _get_id(self, shield):
+        getattr(shield, shield._meta['id_field'])
+
     
     def read_all(self):
         return self.collection.find()
 
     def read_one(self, i):
-        match = self.collection.find_one({self.id_field:i})
+        match = self.collection.find_one({i._meta['id_field']:self._get_id(i)})
         if not match:
             raise FourOhFourException
         return match
@@ -145,16 +149,10 @@ class MongoQueryset(AbstractQueryset):
     
     def create_many(self, shields):
         created, updated = [], []
-        exisiting_records = list(self.collection.find( { self.id_field : { "$in": shield_ids} } ))
-        shield_ids ={}
         for shield in shields:
-            shield_ids[getattr(shield, self.id_field)] = shield
-        for record in exisiting_records:
-            if record.get(self.id_field) in shield_ids:
-                updated.append(shield_ids[record.get(self.id_field)])
-            else:
-                created.append(shield_ids[record.get(self.id_field)])
-        
+            old = self.collection.find_and_modify({self.id_field:shield.get(self.id_field)}, shield.to_python(), upsert=True)
+            if not old:
+                created.append(shield)
         self.collection.insert(shield.to_python() for shield in shields)
 
         return created, updated, []
