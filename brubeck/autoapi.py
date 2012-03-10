@@ -221,6 +221,10 @@ class AutoAPIBase(JSONMessageHandler):
         try:
             ### Setup environment
             is_list = isinstance(ids, list)
+            if self.application.MULTIPLE_ITEM_SEP in ids:
+                ids = items = ids.split(self.application.MULTIPLE_ITEM_SEP)
+                is_list = True
+                
             
             # Convert arguments
             (valid, data) = self._convert_item_or_list(ids, is_list,
