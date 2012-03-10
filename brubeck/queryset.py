@@ -153,16 +153,13 @@ class DictQueryset(AbstractQueryset):
 
     def read_one(self, iid):
         iid = str(iid)  # TODO Should be cleaner
-        if iid in self.db_conn:
-            return (self.MSG_UPDATED, self.db_conn[iid])
-        else:
-            return (self.MSG_FAILED, iid)
-
-    def read_many(self, ids):
         try:
-            return [self.read_one(iid) for iid in ids]
+            return (self.MSG_UPDATED, self.db_conn[iid])
         except KeyError:
             raise FourOhFourException
+
+    def read_many(self, ids):
+        return [self.read_one(iid) for iid in ids]
 
     ### Update Functions
 
