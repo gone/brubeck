@@ -1,4 +1,3 @@
-import re
 ###
 ### DictShield documents
 ###
@@ -14,6 +13,9 @@ from dictshield.fields import (StringField,
 import auth
 from timekeeping import curtime
 from datamosh import OwnedModelMixin, StreamedModelMixin
+
+import re
+
 
 ###
 ### User Document
@@ -78,7 +80,7 @@ class User(Document):
         if not cls.username_regex.match(username):
             warning = 'Username failed character validation - username_regex'
             raise ValueError(warning)
-        
+
         # Caller should handle validation exceptions
         cls.validate_class_partial(dict(email=email))
 
@@ -90,7 +92,7 @@ class User(Document):
 ###
 ### UserProfile
 ###
-    
+
 class UserProfile(Document, OwnedModelMixin, StreamedModelMixin):
     """The basic things a user profile tends to carry. Isolated in separate
     class to keep separate from private data.
