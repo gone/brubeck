@@ -3,10 +3,11 @@
 """To use this demo, try entering the following commands in a terminal:
 
     curl http://localhost:6767/todo/ | python -mjson.tool
+
     
-    curl -H "content-type: application/json" -f -X POST -d '{"id": "111b4bb7-55f5-441b-ba25-c7a4fd99442c", "text": "Watch more bsg", "order": 1}' http://localhost:6767/todo/111b4bb7-55f5-441b-ba25-c7a4fd99442c/ | python -m json.tool
+    curl -H "content-type: application/json" -f -X POST -d '{"text": "Watch more bsg", "order": 1}' http://localhost:6767/todo/ | python -m json.tool
     
-    curl -H "content-type: application/json" -f -X POST -d '{"id": "222b4bb7-55f5-441b-ba25-c7a4fd994421", "text": "Watch Blade Runner", "order": 2}' http://localhost:6767/todo/222b4bb7-55f5-441b-ba25-c7a4fd994421/ | python -m json.tool
+    curl -H "content-type: application/json" -f -X POST -d '{"text": "Watch Blade Runner", "order": 2}' http://localhost:6767/todo/ | python -m json.tool    
     
     curl http://localhost:6767/todo/ | python -mjson.tool
     
@@ -36,6 +37,7 @@ from dictshield.document import Document
 from dictshield.fields import (StringField,
                                BooleanField)
 
+from dictshield.fields.mongo import ObjectIdField
 
 ### Todo Model
 class Todo(Document):
@@ -46,7 +48,7 @@ class Todo(Document):
     deleted = BooleanField(default=False)
     archived = BooleanField(default=False)
     title = StringField(required=True)
-
+    _id = ObjectIdField(id_field=True)
 
 connection = pymongo.connection.Connection()
 

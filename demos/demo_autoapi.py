@@ -27,9 +27,10 @@
 
 from brubeck.request_handling import Brubeck
 from brubeck.autoapi import AutoAPIBase
-from brubeck.queryset import DictQueryset
+from brubeck.queryset import DictQueryset, MongoQueryset
 from brubeck.templating import Jinja2Rendering, load_jinja2_env
 
+import pymongo
 
 from dictshield.document import Document
 from dictshield.fields import (StringField,
@@ -47,9 +48,11 @@ class Todo(Document):
     title = StringField(required=True)
 
 
+connection = pymongo.connection.Connection()
+
 ### Todo API
 class TodosAPI(AutoAPIBase):
-    queries = DictQueryset()
+    queries = MongoQueryset(connection.todos)
     model = Todo
     def render(self, **kwargs):
         return super(TodosAPI, self).render(hide_status=True, **kwargs)

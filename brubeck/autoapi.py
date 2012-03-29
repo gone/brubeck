@@ -308,24 +308,38 @@ class AutoAPIBase(JSONMessageHandler):
         """ Handles delete for 1 or many items. Since this doesn't take a
         postbody, and just item ids, pass those on directly to destroy
         """
-        body_data = self._get_body_as_data()
-        is_list = isinstance(body_data, list)
-        crud_statuses = list()
-        print 'BODY DATA:', body_data
+        try:
+            is_list = isinstance(ids, list)
+            if self.application.MULTIPLE_ITEM_SEP in ids:
+                ids = items = ids.split(self.application.MULTIPLE_ITEM_SEP)
+                is_list = True
 
-        # Convert arguments
-        (valid, data) = self._convert_item_or_list(body_data, is_list,
-                                                   self._convert_to_model)
 
-        if not valid:
-            return self.render(status_code=400)
+            # Convert arguments
+            (valid, data) = self._convert_item_or_list(ids, is_list,
+                                                       self._convert_to_id)
 
-        if ids:
-            item_ids = ids.split(self.application.MULTIPLE_ITEM_SEP)
-            try:
-                crud_statuses = self.queries.destroy(item_ids)
-            except FourOhFourException:
-                return self.render(status_code=self._NOT_FOUND)
-            
-        return self._generate_response(crud_statuses)
+            if not valid:
+                return self.render(status_code=400)
+
+            if is_list:
+                valid_ids = list()
+                errors_ids = list()
+                for status in data:
+                    (is_valid, idd) = status
+                    if is_valid:
+                        valid_ids.append(idd)
+                    else:
+                        error_ids.append(idd)
+                models = self.queries.destroy(valid_ids)
+                response_data = models
+            else:
+                datum_tuple = self.queries.destroy(data)
+                response_data = datum_tuple
+            # Handle status update
+            return self._generate_response(response_data)
+        except FourOhFourException:
+            return self.render(status_code=self._NOT_FOUND)
+
+
         

@@ -175,75 +175,100 @@ class DictQueryset(AbstractQueryset):
     ### Destroy Functions
 
     def destroy_one(self, item_id):
+        
         try:
             shield = self.db_conn[item_id]
             del self.db_conn[item_id]
         except KeyError:
             raise FourOhFourException
 
-        return (self.MSG_UPDATED, shield)
+        return (self.MSG_UPDATED, {'_id':item_id})
 
     def destroy_many(self, ids):
         statuses = [self.destroy_one(iid) for iid in ids]
         return statuses
 
+from pymongo.errors import OperationFailure
     
 class MongoQueryset(AbstractQueryset):
     """ A Queryset that deals with talking to mongodb"""
 
-    def __init__(self, db_conn=None, api_id='id'):
+    def __init__(self, db_conn=None, api_id='_id'):
         """ A mongoqueryset takes a collection as it's fundamental unit."""
         self.collection = db_conn
         self.api_id=api_id
         
     def _get_id(self, shield):
-        getattr(shield, shield._meta['id_field'])
+        getattr(shield, self.api_id)
 
-    
     def read_all(self):
-        return self.collection.find()
+        return [(self.MSG_OK, datum) for datum in self.collection.find({})]
 
-    def read_one(self, i):
-        match = self.collection.find_one({i._meta['id_field']:self._get_id(i)})
+    def read_one(self, idd):
+        match = self.collection.find_one({self.api_id:idd})
         if not match:
             raise FourOhFourException
-        return match
+        return (self.MSG_OK, match)
 
     def read_many(self, ids):
-        matches = list(self.collection.find({self.id_field:{"$in":ids}}))
+        import pdb
+        pdb.set_trace()
+        cursor = self.collection.find({self.api_id:{"$in":ids}})
+        matches = list(cursor)
         if len(matches) != len(ids):
             raise FourOhFourException
-        return matches
+        return [(self.MSG_OK, datum) for datum in matches]
                 
     def create_one(self, shield):
-        return self.collection.insert(shield.to_python())
+        try:
+             self.collection.insert(shield.to_python(),
+                                    safe=True,
+                                    check_keys=True)
+             return (self.MSG_CREATED, shield)
+        except OperationFailure as e:
+            return (self.MSG_FAILED, e) ## should we return the error here?
     
     def create_many(self, shields):
-        created, updated = [], []
-        for shield in shields:
-            old = self.collection.find_and_modify({self.id_field:shield.get(self.id_field)}, shield.to_python(), upsert=True)
-            if not old:
-                created.append(shield)
-        self.collection.insert(shield.to_python() for shield in shields)
+        import pdb
+        pdb.set_trace()
+        try:
+            self.collection.insert(shield.to_python() for shield in shields)
+            return [(self.MSG_CREATED, shield) for shield in shields]
+        except OperationFailure as e:
+            return (self.MSG_FAILED, e)
 
-        return created, updated, []
-                
     def update_one(self, shield):
-        return self.update_many([shield])
-
+        try:
+            self.collection.update(shield.to_python())
+            return (self.MSG_UPDATED, shield)
+        except OperationFailure as e:
+            return (self.MSG_FAILED, e)
+        
     def update_many(self, shields):
-        for shield in shields:
-            self.db_conn[str(getattr(shield, self.api_id))] = shield.to_python()
-        return shields, []
+        try:
+            ret = []
+            for shield in shields:
+                idd = self._get_id(shield)
+                self.collection.update({self.api_id:idd}, shield.to_python())
+                ret.append((self.MSG_UPDATED, shield))
+            return ret
+        except OperationFailure as e:
+            return (self.MSG_FAILED, e)
     
     def destroy_one(self, item_id):
-        return self.destroy_many([item_id])
-
+        self.read_one(item_id) #to check for 404
+        try: 
+            self.collection.remove({self.api_id:item_id}, safe=True)
+            return (self.MSG_UPDATED, {'_id':item_id})
+        except OperationFailure as e:
+            return (self.MSG_FAILED, e)
+        
     def destroy_many(self, item_ids):
+        self.read_many(item_ids) #to check for 404
         try:
-            for i in item_ids:
-                del self.db_conn[i]
-        except KeyError:
-            raise FourOhFourException
-        return item_ids, []
+            self.collection.remove({self.api_id : {"$in" :item_ids}})
+            return [(self.MSG_UPDATED, {'_id':item_id}) for item_id in item_ids]
+        except OperationFailure as e:
+            return (self.MSG_FAILED, e)
+
 
