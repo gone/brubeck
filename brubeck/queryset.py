@@ -1,6 +1,6 @@
 from request_handling import FourOhFourException
 
-    
+
 class AbstractQueryset(object):
     """The design of the `AbstractQueryset` attempts to map RESTful calls
     directly to CRUD calls. It also attempts to be compatible with a single
@@ -26,7 +26,7 @@ class AbstractQueryset(object):
     MSG_CREATED = 'Created'
     MSG_NOTFOUND = 'Not Found'
     MSG_FAILED = 'Failed'
-    
+
     def __init__(self, db_conn=None, api_id='id'):
         self.db_conn = db_conn
         self.api_id = api_id
@@ -78,7 +78,7 @@ class AbstractQueryset(object):
     ###
 
     ### Create Functions
-    
+
     def create_one(self, shield):
         raise NotImplementedError
 
@@ -131,14 +131,14 @@ class DictQueryset(AbstractQueryset):
         super(DictQueryset, self).__init__(db_conn=dict(), **kw)
 
     ### Create Functions
-        
+
     def create_one(self, shield):
         if shield.id in self.db_conn:
             status = self.MSG_UPDATED
         else:
             status = self.MSG_CREATED
 
-        shield_key = str(getattr(shield, self.api_id)) 
+        shield_key = str(getattr(shield, self.api_id))
         self.db_conn[shield_key] = shield.to_python()
         return (status, shield)
 
@@ -153,16 +153,18 @@ class DictQueryset(AbstractQueryset):
 
     def read_one(self, iid):
         iid = str(iid)  # TODO Should be cleaner
-        try:
-            return (self.MSG_UPDATED, self.db_conn[iid])
-        except KeyError:
-            raise FourOhFourException
+        if iid in self.db_conn:
+            return (self.MSG_OK, self.db_conn[iid])
+        else:
+            return (self.MSG_FAILED, iid)
+
+    def read_many(self, ids):
+        return [self.read_one(iid) for iid in ids]
 
     def read_many(self, ids):
         return [self.read_one(iid) for iid in ids]
 
     ### Update Functions
-
     def update_one(self, shield):
         shield_key = str(getattr(shield, self.api_id))
         self.db_conn[shield_key] = shield.to_python()
@@ -175,21 +177,20 @@ class DictQueryset(AbstractQueryset):
     ### Destroy Functions
 
     def destroy_one(self, item_id):
-        
+
         try:
-            shield = self.db_conn[item_id]
+            datum = self.db_conn[item_id]
             del self.db_conn[item_id]
         except KeyError:
             raise FourOhFourException
-
-        return (self.MSG_UPDATED, {'_id':item_id})
+        return (self.MSG_UPDATED, datum)
 
     def destroy_many(self, ids):
         statuses = [self.destroy_one(iid) for iid in ids]
         return statuses
 
 from pymongo.errors import OperationFailure
-    
+
 class MongoQueryset(AbstractQueryset):
     """ A Queryset that deals with talking to mongodb"""
 
@@ -197,7 +198,7 @@ class MongoQueryset(AbstractQueryset):
         """ A mongoqueryset takes a collection as it's fundamental unit."""
         self.collection = db_conn
         self.api_id=api_id
-        
+
     def _get_id(self, shield):
         getattr(shield, self.api_id)
 
@@ -218,7 +219,7 @@ class MongoQueryset(AbstractQueryset):
         if len(matches) != len(ids):
             raise FourOhFourException
         return [(self.MSG_OK, datum) for datum in matches]
-                
+
     def create_one(self, shield):
         try:
              self.collection.insert(shield.to_python(),
@@ -227,7 +228,7 @@ class MongoQueryset(AbstractQueryset):
              return (self.MSG_CREATED, shield)
         except OperationFailure as e:
             return (self.MSG_FAILED, e) ## should we return the error here?
-    
+
     def create_many(self, shields):
         import pdb
         pdb.set_trace()
@@ -243,7 +244,7 @@ class MongoQueryset(AbstractQueryset):
             return (self.MSG_UPDATED, shield)
         except OperationFailure as e:
             return (self.MSG_FAILED, e)
-        
+
     def update_many(self, shields):
         try:
             ret = []
@@ -254,15 +255,15 @@ class MongoQueryset(AbstractQueryset):
             return ret
         except OperationFailure as e:
             return (self.MSG_FAILED, e)
-    
+
     def destroy_one(self, item_id):
         self.read_one(item_id) #to check for 404
-        try: 
+        try:
             self.collection.remove({self.api_id:item_id}, safe=True)
             return (self.MSG_UPDATED, {'_id':item_id})
         except OperationFailure as e:
             return (self.MSG_FAILED, e)
-        
+
     def destroy_many(self, item_ids):
         self.read_many(item_ids) #to check for 404
         try:
