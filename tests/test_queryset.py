@@ -1,28 +1,14 @@
 #!/usr/bin/env python
 
 import unittest
-import sys
-import brubeck
-from handlers.method_handlers import simple_handler_method
-from brubeck.request_handling import Brubeck, WebMessageHandler, JSONMessageHandler
-from brubeck.mongrel2 import to_bytes, Request
-from brubeck.request_handling import(
-    cookie_encode, cookie_decode,
-    cookie_is_encoded, http_response
-)
-from handlers.object_handlers import(
-    SimpleWebHandlerObject, CookieWebHandlerObject,
-    SimpleJSONHandlerObject, CookieAddWebHandlerObject,
-    PrepareHookWebHandlerObject, InitializeHookWebHandlerObject
-)
-from fixtures import request_handler_fixtures as FIXTURES
 
-from brubeck.autoapi import AutoAPIBase
-from brubeck.queryset import DictQueryset, AbstractQueryset
+from brubeck.queryset import DictQueryset, AbstractQueryset, MongoQueryset
 
 from dictshield.document import Document
 from dictshield.fields import StringField
-from brubeck.request_handling import FourOhFourException
+
+import pymongo
+
 
 ##TestDocument
 class TestDoc(Document):
@@ -54,20 +40,15 @@ class TestQuerySetPrimitives(unittest.TestCase):
        pass
 
 
-class TestDictQueryset(unittest.TestCase):
+class TestQueryset(object):
     """
     a test class for brubeck's dictqueryset's operations.
     """
-
-
-    def setUp(self):
-        self.queryset = DictQueryset()
 
     def seed_reads(self):
         shields = [TestDoc(id="foo"), TestDoc(id="bar"), TestDoc(id="baz")]
         self.queryset.create_many(shields)
         return shields
-
 
     def test__create_one(self):
         shield = TestDoc(id="foo")
@@ -180,6 +161,26 @@ class TestDictQueryset(unittest.TestCase):
         status, datum = self.queryset.read_one(shield_to_keep.id)
         self.assertEqual(self.queryset.MSG_OK, status)
         self.assertEqual(shield_to_keep.to_python(), datum)
+
+
+class TestDictQueryset(TestQueryset, unittest.TestCase):
+    def setUp(self):
+        self.queryset = DictQueryset()
+
+
+class TestMongoQueryset(TestQueryset, unittest.TestCase):
+    db_name = "brubecktest"
+    collection_name = 'test_db'
+    #TODO: alert if this already exisits. dropping someone's data would be a bummer!
+
+    def setUp(self):
+        self.connection = pymongo.connection.Connection()
+        database = getattr(self.connection, self.db_name)
+        collection = getattr(database, self.collection_name)
+        self.queryset = MongoQueryset(collection, api_id='id')
+
+    def tearDown(self):
+        self.connection.drop_database(self.db_name)
 
 
 ##
