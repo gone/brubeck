@@ -1,3 +1,4 @@
+from  copy import copy
 from request_handling import FourOhFourException
 
 
@@ -161,9 +162,6 @@ class DictQueryset(AbstractQueryset):
     def read_many(self, ids):
         return [self.read_one(iid) for iid in ids]
 
-    def read_many(self, ids):
-        return [self.read_one(iid) for iid in ids]
-
     ### Update Functions
     def update_one(self, shield):
         shield_key = str(getattr(shield, self.api_id))
@@ -177,7 +175,6 @@ class DictQueryset(AbstractQueryset):
     ### Destroy Functions
 
     def destroy_one(self, item_id):
-
         try:
             datum = self.db_conn[item_id]
             del self.db_conn[item_id]
@@ -199,76 +196,72 @@ class MongoQueryset(AbstractQueryset):
         self.collection = db_conn
         self.api_id=api_id
 
-    def _get_id(self, shield):
-        getattr(shield, self.api_id)
+
+    def _yield_updates(self, shields, upsert=True):
+        for shield in shields:
+            id = shield.id
+            updates = shield.to_python()
+            try:
+                result =  self.collection.update({'_id':id}, updates, upsert=upsert, safe=True)
+                if result['updatedExisting']:
+                    yield (self.MSG_UPDATED, shield)
+                else:
+                    yield (self.MSG_CREATED, shield)
+            except OperationFailure as e:
+                yield (self.MSG_FAILED, e)
+
 
     def read_all(self):
         return [(self.MSG_OK, datum) for datum in self.collection.find({})]
 
-    def read_one(self, idd):
-        match = self.collection.find_one({self.api_id:idd})
+    def read_one(self, iid):
+        match = self.collection.find_one({'_id':iid})
         if not match:
-            raise FourOhFourException
+            return (self.MSG_FAILED, iid)
         return (self.MSG_OK, match)
 
     def read_many(self, ids):
-        import pdb
-        pdb.set_trace()
-        cursor = self.collection.find({self.api_id:{"$in":ids}})
-        matches = list(cursor)
-        if len(matches) != len(ids):
-            raise FourOhFourException
-        return [(self.MSG_OK, datum) for datum in matches]
+        cursor = self.collection.find({'_id':{"$in":ids}})
+        match_count = cursor.count()
+        if match_count == len(ids):
+            return [(self.MSG_OK, datum) for datum in cursor]
+        else:
+            unknown_ids = copy(ids)
+            return_values = []
+            for match in cursor:
+                unknown_ids.remove(match['_id'])
+                return_values.append((self.MSG_OK, match))
+            for unknown_id in unknown_ids:
+                return_values.append((self.MSG_FAILED, unknown_id))
+            return return_values
 
     def create_one(self, shield):
-        try:
-             self.collection.insert(shield.to_python(),
-                                    safe=True,
-                                    check_keys=True)
-             return (self.MSG_CREATED, shield)
-        except OperationFailure as e:
-            return (self.MSG_FAILED, e) ## should we return the error here?
+        gen = self._yield_updates([shield])
+        return gen.next()
 
     def create_many(self, shields):
-        import pdb
-        pdb.set_trace()
-        try:
-            self.collection.insert(shield.to_python() for shield in shields)
-            return [(self.MSG_CREATED, shield) for shield in shields]
-        except OperationFailure as e:
-            return (self.MSG_FAILED, e)
+        gen = self._yield_updates(shields)
+        return list(gen)
 
     def update_one(self, shield):
-        try:
-            self.collection.update(shield.to_python())
-            return (self.MSG_UPDATED, shield)
-        except OperationFailure as e:
-            return (self.MSG_FAILED, e)
+        gen = self._yield_updates([shield], upsert=False)
+        return gen.next()
 
     def update_many(self, shields):
-        try:
-            ret = []
-            for shield in shields:
-                idd = self._get_id(shield)
-                self.collection.update({self.api_id:idd}, shield.to_python())
-                ret.append((self.MSG_UPDATED, shield))
-            return ret
-        except OperationFailure as e:
-            return (self.MSG_FAILED, e)
+        gen = self._yield_updates(shields, upsert=False)
+        return list(gen)
 
     def destroy_one(self, item_id):
-        self.read_one(item_id) #to check for 404
         try:
-            self.collection.remove({self.api_id:item_id}, safe=True)
-            return (self.MSG_UPDATED, {'_id':item_id})
+            self.collection.remove({"_id":item_id}, safe=True)
+            return (self.MSG_UPDATED, item_id)
         except OperationFailure as e:
             return (self.MSG_FAILED, e)
 
     def destroy_many(self, item_ids):
-        self.read_many(item_ids) #to check for 404
         try:
-            self.collection.remove({self.api_id : {"$in" :item_ids}})
-            return [(self.MSG_UPDATED, {'_id':item_id}) for item_id in item_ids]
+            self.collection.remove({'_id' : {"$in" :item_ids}})
+            return [(self.MSG_UPDATED, item_id) for item_id in item_ids]
         except OperationFailure as e:
             return (self.MSG_FAILED, e)
 
