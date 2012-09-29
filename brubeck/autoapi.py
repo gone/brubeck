@@ -15,26 +15,25 @@ class AutoAPIBase(JSONMessageHandler):
     queries = None
 
     _PAYLOAD_DATA = 'data'
-    _PAYLOAD_STATUS = 'status'
-    _PAYLOAD_MULTISTATUS = 'multistatus'
 
     ###
     ### Input Handling
     ###
 
-    ### Section TODO:
-    ### * investigate unicode handling bug in ujson
-
     def _get_body_as_data(self):
         """Returns the body data based on the content_type requested by the
         client.
         """
+        ### Locate body data by content type
         if self.message.content_type == 'application/json':
             body = self.message.body
         else:
             body = self.get_argument('data')
+
+        ### Load found JSON into Python structure
         if body:
             body = json.loads(body)
+
         return body
 
     def _convert_to_id(self, datum):
@@ -98,18 +97,22 @@ class AutoAPIBase(JSONMessageHandler):
         used for HTTP.
         """
         if self.queries.MSG_FAILED == crud_status:
-            status_code = self._FAILED_CODE
+            return self._FAILED_CODE
+        
         elif self.queries.MSG_CREATED == crud_status:
-            status_code = self._CREATED_CODE
+            return self._CREATED_CODE
+        
         elif self.queries.MSG_UPDATED == crud_status:
-            status_code = self._UPDATED_CODE
+            return self._UPDATED_CODE
+        
         elif self.queries.MSG_OK == crud_status:
-            status_code = self._SUCCESS_CODE
+            return self._SUCCESS_CODE
+        
         elif len(crud_status) == 0:
-            status_code = self._SUCCESS_CODE
+            return self._SUCCESS_CODE
+        
         else:
-            status_code = self._SERVER_ERROR
-        return status_code
+            return self._SERVER_ERROR
 
     def _make_presentable(self, datum):
         """This function takes either a model instance or a dictionary
@@ -149,7 +152,9 @@ class AutoAPIBase(JSONMessageHandler):
         return (http_status_code, data)
 
     def _generate_response(self, status_data):
-        """Parses status data and generates the full HTTP response.
+        """Parses crud data and generates the full HTTP response. The idea here
+        is to translate the results of some crud operation into something
+        appropriate for HTTP.
 
         `status_data` is ambiguously named because it might be a list and it
         might be a single item. This will likely be altered when the crud
@@ -175,14 +180,21 @@ class AutoAPIBase(JSONMessageHandler):
             else:
                 http_status_code = statuses.pop()
 
+            ### Store accumulated data to payload
             self.add_to_payload(self._PAYLOAD_DATA, data_list)
+
+            ### Return full HTTP response
             return self.render(status_code=http_status_code)
         
         ### Case 2: `status_data` is a single item
         else:
+            ### Extract datum
             (http_status_code, data) = self._parse_crud_datum(status_data)
 
+            ### Store datum as data on payload
             self.add_to_payload(self._PAYLOAD_DATA, data)
+
+            ### Return full HTTP response
             return self.render(status_code=http_status_code)
 
     ###
@@ -209,13 +221,26 @@ class AutoAPIBase(JSONMessageHandler):
     ### HTTP methods
     ###
 
-    ### Section TODO:
-    ### * Cleaner handling of list vs single
-    ### * Clean handling of how status info is or isn't used
-    ### * Check handling of multiple listed ids
+    ### There is a pattern that is used in each of the calls. The basic idea is
+    ### to handle three cases in an appropriate way. These three cases apply to
+    ### input provided in the URL, such as document ids, or data provided via
+    ### an HTTP method, like POST.
+    ###
+    ### For URLs we handle 0 IDs, 1 ID, and N IDs. Zero, One, Infinity.
+    ### For data we handle 0 datums, 1 datum and N datums. ZOI, again.
+    ###
+    ### Paging and authentication will be offered soon.
 
     def get(self, ids=""):
-        """Handles read - either with a filter (ids) or a total list
+        """HTTP GET implementation.
+
+        IDs:
+          * 0 IDs: produces a list of items presented. Paging will be available
+            soon.
+          * 1 ID: This produces the corresponding document.
+          * N IDs: This produces a list of corresponding documents.
+
+        Data: N/A
         """
         
         try:
@@ -252,9 +277,23 @@ class AutoAPIBase(JSONMessageHandler):
             return self.render(status_code=self._NOT_FOUND)
         
     def post(self, ids=""):
+        """HTTP POST implementation.
+
+        The opinion of this `post()` implementation is that POST is ideally
+        suited for saving documents for the first time. Using POST triggers the
+        ID generation system and the document is saved with an ID. The ID is
+        then returned as part of the generated response.
+
+        We are aware there is sometimes some controversy over what POST and PUT
+        mean. You can please some of the people, some of the time...
+
+        Data:
+          * 0 Data: This case isn't useful so it throws an error.
+          * 1 Data: Writes a single document to queryset.
+          * N Datas: Attempts to write each document to queryset.
+        """
         body_data = self._get_body_as_data()
         is_list = isinstance(body_data, list)
-        print 'BODY DATA:', body_data        
 
         # Convert arguments
         (valid, data) = self._convert_item_or_list(body_data, is_list,
@@ -281,12 +320,26 @@ class AutoAPIBase(JSONMessageHandler):
             return self._generate_response(statuses)
 
     def put(self, ids=""):
-        """Follows roughly the same logic as `post` but exforces that the items
-        must already exist.
+        """HTTP PUT implementation.
+
+        The opinion of this `put()` implementation is that PUT is ideally
+        suited for saving documents that have been saved at least once before,
+        signaled by the presence of an id. This call will write the entire
+        input on top of any data previously there, rendering it idempotent, but
+        also destructive.
+        
+        IDs: 
+          * 0 IDs: Generates IDs for each item of input and saves to QuerySet.
+          * 1 ID: Attempts to map one document from input to the provided ID.
+          * N IDs: Attempts to one-to-one map documents from input to IDs.
+
+        Data:
+          * 0 Data: This case isn't useful so it throws an error.
+          * 1 Data: Writes a single document to queryset.
+          * N Datas: Attempts to write each document to queryset.
         """
         body_data = self._get_body_as_data()
         is_list = isinstance(body_data, list)
-        print 'BODY DATA:', body_data
 
         # Convert arguments
         (valid, data) = self._convert_item_or_list(body_data, is_list,
@@ -305,13 +358,20 @@ class AutoAPIBase(JSONMessageHandler):
         return self._generate_response(crud_statuses)
 
     def delete(self, ids=""):
-        """ Handles delete for 1 or many items. Since this doesn't take a
-        postbody, and just item ids, pass those on directly to destroy
+        """HTTP DELETE implementation.
+
+        Basically just attempts to delete documents by the provided ID.
+        
+        IDs: 
+          * 0 IDs: Returns a 400 error
+          * 1 ID: Attempts to delete a single document by ID
+          * N IDs: Attempts to delete many documents by ID.
+
+        Data: N/A
         """
         body_data = self._get_body_as_data()
         is_list = isinstance(body_data, list)
         crud_statuses = list()
-        print 'BODY DATA:', body_data
 
         # Convert arguments
         (valid, data) = self._convert_item_or_list(body_data, is_list,

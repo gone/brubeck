@@ -22,9 +22,7 @@ class MakoRendering(WebMessageHandler):
     def render_template(self, template_file,
                         _status_code=WebMessageHandler._SUCCESS_CODE,
                         **context):
-        mako_env = self.application.template_env
-        template = mako_env.get_template(template_file)
-        body = template.render(**context or {})
+        body = self.application.render_template(template_file, **context or {})
         self.set_body(body, status_code=_status_code)
         return self.render()
 
@@ -64,9 +62,7 @@ class Jinja2Rendering(WebMessageHandler):
                         **context):
         """Renders payload as a jinja template
         """
-        jinja_env = self.application.template_env
-        template = jinja_env.get_template(template_file)
-        body = template.render(**context or {})
+        body = self.application.render_template(template_file, **context or {})
         self.set_body(body, status_code=_status_code)
         return self.render()
 
@@ -109,9 +105,7 @@ class TornadoRendering(WebMessageHandler):
                         **context):
         """Renders payload as a tornado template
         """
-        tornado_env = self.application.template_env
-        template = tornado_env.load(template_file)
-        body = template.generate(**context or {})
+        body = self.application.render_template(template_file, **context or {})
         self.set_body(body, status_code=_status_code)
         return self.render()
 
@@ -120,4 +114,51 @@ class TornadoRendering(WebMessageHandler):
         call.
         """
         return self.render_template('errors.html', _status_code=error_code,
+                                    **{'error_code': error_code})
+
+###
+### Mustache
+###
+
+def load_mustache_env(template_dir, *args, **kwargs):
+    """
+    Returns a function that loads a mustache template environment. Uses a
+    closure to provide a namespace around module loading without loading
+    anything until the caller is ready.
+    """
+    def loader():
+        import pystache
+
+        return pystache.Renderer(search_dirs=[template_dir])
+
+    return loader
+
+
+class MustacheRendering(WebMessageHandler):
+    """
+    MustacheRendering is a mixin for for loading a Mustache rendering
+    environment.
+
+    Render success is transmitted via http 200. Rendering failures result in
+    http 500 errors.
+    """
+    def render_template(self, template_file,
+                        _status_code=WebMessageHandler._SUCCESS_CODE,
+                        **context):
+        """
+        Renders payload as a mustache template
+        """
+        mustache_env = self.application.template_env
+
+        template = mustache_env.load_template(template_file)
+        body = mustache_env.render(template, context or {})
+
+        self.set_body(body, status_code=_status_code)
+        return self.render()
+
+    def render_error(self, error_code):
+        """Receives error calls and sends them through a templated renderer
+        call.
+        """
+        return self.render_template('errors', _status_code=error_code,
                                     **{'error_code': error_code})

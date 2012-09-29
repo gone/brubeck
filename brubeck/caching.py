@@ -1,5 +1,6 @@
 import os
 import time
+from exceptions import NotImplementedError
 
 
 ###
@@ -30,7 +31,6 @@ class BaseCacheStore(object):
         save set dirty to False.
         """
         cache_item = {
-            'key_id': key,
             'data': data,
             'expire': expire,
         }
@@ -45,8 +45,8 @@ class BaseCacheStore(object):
                 data = self._cache_store[key]
 
                 # It's an in memory cache, so we must manage
-                if data.get('expire', None) and data['expire'] > time.time():
-                    return data
+                if not data.get('expire', None) or data['expire'] > time.time():
+                    return data['data']
             return None
         except:
             return None
@@ -65,3 +65,57 @@ class BaseCacheStore(object):
             if data.get('expire', None) and data['expire'] < time.time():
                 del_keys.append(key)
         map(self.delete, del_keys)
+
+###
+### Redis Cache Store
+###
+
+class RedisCacheStore(BaseCacheStore):
+    """Redis cache using Redis' EXPIRE command to set 
+    expiration time. `delete_expired` raises NotImplementedError.
+    Pass the Redis connection instance as `db_conn`.
+
+    ##################
+    IMPORTANT NOTE:
+
+    This caching store uses a flat namespace for storing keys since
+    we cannot set an EXPIRE for a hash `field`. Use different
+    Redis databases to keep applications from overwriting 
+    keys of other applications.
+
+    ##################
+    
+    The Redis connection uses the redis-py api located here:
+    https://github.com/andymccurdy/redis-py
+    """
+    
+    def __init__(self, redis_connection=None, **kwargs):
+        super(RedisCacheStore, self).__init__(**kwargs)
+        self._cache_store = redis_connection
+
+    def save(self, key, data, expire=None):
+        """expire will be a Unix timestamp
+        from time.time() + <value> which is 
+        a value in seconds."""
+
+        pipe = self._cache_store.pipeline()
+        pipe.set(key, data)
+        if expire:
+            expire_seconds = expire - time.time()
+            print expire_seconds, 'expire_seconds dude'
+            assert(expire_seconds > 0)
+            pipe.expire(key, int(expire_seconds))
+        print pipe.execute()
+        
+    def load(self, key):
+        """return the value of `key`. If key
+        does not exist or has expired, `hget` will
+        return None"""
+
+        return self._cache_store.get(key)
+    
+    def delete(self, key):
+        self._cache_store.delete(key)
+        
+    def delete_expired(self):
+        raise NotImplementedError

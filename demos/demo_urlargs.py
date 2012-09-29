@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 
+from brubeck.request_handling import Brubeck, WebMessageHandler, render
+from brubeck.connections import Mongrel2Connection
 import sys
-
-from brubeck.request_handling import Brubeck, WebMessageHandler, http_response
 
 
 class IndexHandler(WebMessageHandler):
@@ -17,7 +17,7 @@ class NameHandler(WebMessageHandler):
         return self.render()
 
 def name_handler(application, message, name):
-    return http_response('Take five, %s!' % (name), 200, 'OK', {})
+    return render('Take five, %s!' % (name), 200, 'OK', {})
 
 
 urls = [(r'^/class/(\w+)$', NameHandler),
@@ -25,7 +25,7 @@ urls = [(r'^/class/(\w+)$', NameHandler),
         (r'^/$', IndexHandler)]
 
 config = {
-    'mongrel2_pair': ('ipc://127.0.0.1:9999', 'ipc://127.0.0.1:9998'),
+    'msg_conn': Mongrel2Connection('tcp://127.0.0.1:9999', 'tcp://127.0.0.1:9998'),
     'handler_tuples': urls,
 }
 
@@ -34,7 +34,7 @@ app = Brubeck(**config)
 
 @app.add_route('^/deco/(?P<name>\w+)$', method='GET')
 def new_name_handler(application, message, name):
-    return http_response('Take five, %s!' % (name), 200, 'OK', {})
+    return render('Take five, %s!' % (name), 200, 'OK', {})
 
 
 app.run()

@@ -16,7 +16,6 @@ try:
     from gevent import monkey
     monkey.patch_all()
     from gevent import pool
-    from gevent_zeromq import zmq
 
     coro_pool = pool.Pool
 
@@ -30,7 +29,6 @@ except ImportError:
     try:
         import eventlet
         eventlet.patcher.monkey_patch(all=True)
-        from eventlet.green import zmq
 
         coro_pool = eventlet.GreenPool
 
@@ -39,8 +37,8 @@ except ImportError:
 
         CORO_LIBRARY = 'eventlet'
 
-    except ImportError:  # eventlet or gevent is required.
-        raise EnvironmentError('Y U NO INSTALL CONCURRENCY?!')
+    except ImportError:
+        raise EnvironmentError('You need to install eventlet or gevent')
 
 
 from . import version
@@ -54,9 +52,9 @@ import base64
 import hmac
 import cPickle as pickle
 from itertools import chain
-
-from mongrel2 import Mongrel2Connection, to_bytes, to_unicode
+import os, sys
 from dictshield.base import ShieldException
+from request import Request, to_bytes, to_unicode
 
 import ujson as json
 
@@ -74,6 +72,20 @@ class FourOhFourException(Exception):
     pass
 
 
+###
+### Result Processing
+###
+
+def render(body, status_code, status_msg, headers):
+    payload = {
+        'body': body,
+        'status_code': status_code,
+        'status_msg': status_msg,
+        'headers': headers,
+    }
+    return payload
+
+
 def http_response(body, code, status, headers):
     """Renders arguments into an HTTP response.
     """
@@ -81,49 +93,18 @@ def http_response(body, code, status, headers):
     content_length = 0
     if body is not None:
         content_length = len(to_bytes(body))
+
     headers['Content-Length'] = content_length
     payload['headers'] = "\r\n".join('%s: %s' % (k, v)
                                      for k, v in headers.items())
 
     return HTTP_FORMAT % payload
 
-
 def _lscmp(a, b):
     """Compares two strings in a cryptographically safe way
     """
     return not sum(0 if x == y else 1
                    for x, y in zip(a, b)) and len(a) == len(b)
-
-
-###
-### Message handling coroutines
-###
-
-def route_message(application, message):
-    """This is the first of the three coroutines called. It looks at the
-    message, determines which handler will be used to process it, and
-    spawns a coroutine to run that handler.
-
-    The application is responsible for handling misconfigured routes.
-    """
-    handler = application.route_message(message)
-    coro_spawn(request_handler, application, message, handler)
-
-
-def request_handler(application, message, handler):
-    """Coroutine for handling the request itself. It simply returns the request
-    path in reverse for now.
-    """
-    if callable(handler):
-        response = handler()
-        coro_spawn(result_handler, application, message, response)
-
-
-def result_handler(application, message, response):
-    """The request has been processed and this is called to do any post
-    processing and then send the data back to mongrel2.
-    """
-    application.m2conn.reply(message, response)
 
 
 ###
@@ -224,6 +205,11 @@ class MessageHandler(object):
         """
         pass
 
+    def on_finish(self):
+        """Called after the message handling method. Counterpart to prepare
+        """
+        pass
+
     @property
     def db_conn(self):
         """Short hand to put database connection in easy reach of handlers
@@ -313,41 +299,44 @@ class MessageHandler(object):
 
         In all cases, generating a response for mongrel2 is attempted.
         """
-        self.prepare()
-        if not self._finished:
-            mef = self.message.method.lower()  # M-E-T-H-O-D man!
+        try:
+            self.prepare()
+            if not self._finished:
+                mef = self.message.method.lower()  # M-E-T-H-O-D man!
 
-            # Find function mapped to method on self
-            if mef in HTTP_METHODS:
-                fun = getattr(self, mef, self.unsupported)
-            else:
-                fun = self.unsupported
-
-            # Call the function we settled on
-            try:
-                if not hasattr(self, '_url_args') or self._url_args is None:
-                    self._url_args = []
-
-                if isinstance(self._url_args, dict):
-                    ### if the value was optional and not included, filter it
-                    ### out so the functions default takes priority
-                    kwargs = dict((k, v)
-                                  for k, v in self._url_args.items() if v)
-                    rendered = fun(**kwargs)
+                # Find function mapped to method on self
+                if mef in HTTP_METHODS:
+                    fun = getattr(self, mef, self.unsupported)
                 else:
-                    rendered = fun(*self._url_args)
+                    fun = self.unsupported
 
-                if rendered is None:
-                    logging.debug('Handler had no return value: %s' % fun)
-                    return ''
-            except Exception, e:
-                logging.error(e, exc_info=True)
-                rendered = self.error(e)
+                # Call the function we settled on
+                try:
+                    if not hasattr(self, '_url_args') or self._url_args is None:
+                        self._url_args = []
 
-            self._finished = True
-            return rendered
-        else:
-            return self.render()
+                    if isinstance(self._url_args, dict):
+                        ### if the value was optional and not included, filter it
+                        ### out so the functions default takes priority
+                        kwargs = dict((k, v)
+                                      for k, v in self._url_args.items() if v)
+                        rendered = fun(**kwargs)
+                    else:
+                        rendered = fun(*self._url_args)
+
+                    if rendered is None:
+                        logging.debug('Handler had no return value: %s' % fun)
+                        return ''
+                except Exception, e:
+                    logging.error(e, exc_info=True)
+                    rendered = self.error(e)
+
+                self._finished = True
+                return rendered
+            else:
+                return self.render()
+        finally:
+            self.on_finish()
 
 
 class WebMessageHandler(MessageHandler):
@@ -364,6 +353,7 @@ class WebMessageHandler(MessageHandler):
     _AUTH_FAILURE = 401
     _FORBIDDEN = 403
     _NOT_FOUND = 404
+    _NOT_ALLOWED = 405
     _SERVER_ERROR = 500
 
     _response_codes = {
@@ -544,8 +534,7 @@ class WebMessageHandler(MessageHandler):
 
         self.convert_cookies()
 
-        response = http_response(self.body, status_code,
-                                 self.status_msg, self.headers)
+        response = render(self.body, status_code, self.status_msg, self.headers)
 
         logging.info('%s %s %s (%s)' % (status_code, self.message.method,
                                         self.message.path,
@@ -573,8 +562,8 @@ class JSONMessageHandler(WebMessageHandler):
         else:
             body = json.dumps(self._payload)
 
-        response = http_response(body, self.status_code,
-                                 self.status_msg, self.headers)
+        response = render(body, self.status_code, self.status_msg,
+                          self.headers)
 
         logging.info('%s %s %s (%s)' % (self.status_code, self.message.method,
                                         self.message.path,
@@ -600,8 +589,8 @@ class JsonSchemaMessageHandler(WebMessageHandler):
         self.convert_cookies()
         self.headers['Content-Type'] = "application/schema+json"
 
-        response = http_response(self.body, status_code,
-                                 self.status_msg, self.headers)
+        response = render(self.body, status_code, self.status_msg,
+                          self.headers)
 
         return response
 
@@ -613,21 +602,38 @@ class Brubeck(object):
 
     MULTIPLE_ITEM_SEP = ','
 
-    def __init__(self, mongrel2_pair=None, handler_tuples=None, pool=None,
+    def __init__(self, msg_conn=None, handler_tuples=None, pool=None,
                  no_handler=None, base_handler=None, template_loader=None,
                  log_level=logging.INFO, login_url=None, db_conn=None,
-                 cookie_secret=None,
+                 cookie_secret=None, api_base_url=None,
                  *args, **kwargs):
-        """Brubeck is a class for managing connections to Mongrel2 servers
-        while providing an asynchronous system for managing message handling.
+        """Brubeck is a class for managing connections to webservers. It
+        supports Mongrel2 and WSGI while providing an asynchronous system for
+        managing message handling.
 
-        mongrel2_pair should be a 2-tuple consisting of the pull socket address
-        and the pub socket address for communicating with Mongrel2. Brubeck
-        creates and manages a Mongrel2Connection instance from there.
+        `msg_conn` should be a `connections.Connection` instance.
 
-        handler_tuples is a list of two-tuples. The first item is a regex
+        `handler_tuples` is a list of two-tuples. The first item is a regex
         for matching the URL requested. The second is the class instantiated
         to handle the message.
+
+        `pool` can be an existing coroutine pool, but one will be generated if
+        one isn't provided.
+
+        `base_handler` is a class that Brubeck can rely on for implementing
+        error handling functions.
+
+        `template_loader` is a function that builds the template loading
+        environment.
+
+        `log_level` is a log level mapping to Python's `logging` module's
+        levels.
+
+        `login_url` is the default URL for a login screen.
+
+        `db_conn` is a database connection to be shared in this process
+
+        `cookie_secret` is a string to use for signing secure cookies.
         """
         # All output is sent via logging
         # (while i figure out how to do a good abstraction via zmq)
@@ -636,14 +642,11 @@ class Brubeck(object):
         # Log whether we're using eventlet or gevent.
         logging.info('Using coroutine library: %s' % CORO_LIBRARY)
 
-        # A Mongrel2Connection is currently just a way to manage
-        # the sockets we need to open with a Mongrel2 instance and
-        # identify this particular Brubeck instance as the sender
-        if mongrel2_pair is not None:
-            (pull_addr, pub_addr) = mongrel2_pair
-            self.m2conn = Mongrel2Connection(pull_addr, pub_addr)
+        # Attach the web server connection
+        if msg_conn is not None:
+            self.msg_conn = msg_conn
         else:
-            raise ValueError('No mongrel2 connection possible.')
+            raise ValueError('No web server connection provided.')
 
         # Class based route lists should be handled this way.
         # It is also possible to use `add_route`, a decorator provided by a
@@ -671,15 +674,37 @@ class Brubeck(object):
         # Login url is optional
         self.login_url = login_url
 
+        # API base url is optional
+        if api_base_url is None:
+            self.api_base_url = '/'
+        else:
+            self.api_base_url = api_base_url
+
         # This must be set to use secure cookies
         self.cookie_secret = cookie_secret
 
         # Any template engine can be used. Brubeck just needs a function that
         # loads the environment without arguments.
+        #
+        # It then creates a function that renders templates with the given
+        # environment and attaches it to self.
         if callable(template_loader):
             loaded_env = template_loader()
             if loaded_env:
                 self.template_env = loaded_env
+
+                # Create template rendering function
+                def render_template(template_file, **context):
+                    """Renders template using provided template environment.
+                    """
+                    if hasattr(self, 'template_env'):
+                        t_env = self.template_env
+                        template = t_env.get_template(template_file)
+                        body = template.render(**context or {})
+                    return body
+
+                # Attach it to brubeck app (self)
+                setattr(self, 'render_template', render_template)
             else:
                 raise ValueError('template_env failed to load.')
 
@@ -781,14 +806,18 @@ class Brubeck(object):
 
         return handler
 
-    def register_api(self, APIClass):
+    def register_api(self, APIClass, prefix=None):
         model, model_name = APIClass.model, APIClass.model.__name__.lower()
 
         if not JsonSchemaMessageHandler.manifest:
             manifest_pattern = "/manifest.json"
             self.add_route_rule(manifest_pattern, JsonSchemaMessageHandler)
 
-        url_prefix = "/" + model_name
+        if prefix is None:
+            url_prefix = self.api_base_url + model_name
+        else:
+            url_prefix = prefix
+
         # TODO inspect url pattern for holes
         pattern = "/((?P<ids>[-\w\d%s]+)(/)*|$)" % self.MULTIPLE_ITEM_SEP
         api_url = ''.join([url_prefix, pattern])
@@ -796,9 +825,17 @@ class Brubeck(object):
         self.add_route_rule(api_url, APIClass)
         JsonSchemaMessageHandler.add_model(model)
 
+
     ###
     ### Application running functions
     ###
+
+    def recv_forever_ever(self):
+        """Helper function for starting the link between Brubeck and the
+        message processing provided by `msg_conn`.
+        """
+        mc = self.msg_conn
+        mc.recv_forever_ever(self)
 
     def run(self):
         """This method turns on the message handling system and puts Brubeck
@@ -811,13 +848,4 @@ class Brubeck(object):
         greeting = 'Brubeck v%s online ]-----------------------------------'
         print greeting % version
 
-        try:
-            while True:
-                request = self.m2conn.recv()
-                if request.is_disconnect():
-                    continue
-                else:
-                    coro_spawn(route_message, self, request)
-        except KeyboardInterrupt, ki:
-            # Put a newline after ^C
-            print '\nBrubeck going down...'
+        self.recv_forever_ever()
