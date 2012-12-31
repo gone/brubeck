@@ -1,3 +1,4 @@
+from brubeck.request_handling import FourOhFourException
 from brubeck.queryset.base import AbstractQueryset
 
 class DictQueryset(AbstractQueryset):
@@ -66,4 +67,3 @@ class DictQueryset(AbstractQueryset):
     def destroy_many(self, ids):
         statuses = [self.destroy_one(iid) for iid in ids]
         return statuses
-
